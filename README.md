@@ -1,19 +1,21 @@
 <div align="center">
   <h1>Actix web</h1>
   <p>
-    <strong>Actix web is a powerful, pragmatic, and extremely fast web framework for Rust</strong>
+    <strong>Actix Web is a powerful, pragmatic, and extremely fast web framework for Rust</strong>
   </p>
   <p>
 
-[![crates.io](https://meritbadge.herokuapp.com/actix-web)](https://crates.io/crates/actix-web)
-[![Documentation](https://docs.rs/actix-web/badge.svg)](https://docs.rs/actix-web)
-[![Version](https://img.shields.io/badge/rustc-1.41+-lightgray.svg)](https://blog.rust-lang.org/2020/02/27/Rust-1.41.1.html)
+[![crates.io](https://img.shields.io/crates/v/actix-web?label=latest)](https://crates.io/crates/actix-web)
+[![Documentation](https://docs.rs/actix-web/badge.svg?version=3.3.2)](https://docs.rs/actix-web/3.3.2)
+[![Version](https://img.shields.io/badge/rustc-1.42+-ab6000.svg)](https://blog.rust-lang.org/2020/03/12/Rust-1.42.html)
 ![License](https://img.shields.io/crates/l/actix-web.svg)
+[![Dependency Status](https://deps.rs/crate/actix-web/3.3.2/status.svg)](https://deps.rs/crate/actix-web/3.3.2)
 <br />
 [![Build Status](https://travis-ci.org/actix/actix-web.svg?branch=master)](https://travis-ci.org/actix/actix-web) 
 [![codecov](https://codecov.io/gh/actix/actix-web/branch/master/graph/badge.svg)](https://codecov.io/gh/actix/actix-web) 
 [![Download](https://img.shields.io/crates/d/actix-web.svg)](https://crates.io/crates/actix-web)
 [![Join the chat at https://gitter.im/actix/actix](https://badges.gitter.im/actix/actix.svg)](https://gitter.im/actix/actix?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+[![Chat on Discord](https://img.shields.io/discord/771444961383153695?label=chat&logo=discord)](https://discord.gg/NWpN5mmg3x)
 
   </p>
 </div>
@@ -32,21 +34,16 @@
 * Middlewares ([Logger, Session, CORS, etc](https://actix.rs/docs/middleware/))
 * Includes an async [HTTP client](https://actix.rs/actix-web/actix_web/client/index.html)
 * Supports [Actix actor framework](https://github.com/actix/actix)
-* Runs on stable Rust 1.41+
+* Runs on stable Rust 1.42+
 
 ## Documentation
 
 * [Website & User Guide](https://actix.rs)
-* [Examples Repository](https://actix.rs/actix-web/actix_web)
+* [Examples Repository](https://github.com/actix/examples)
 * [API Documentation](https://docs.rs/actix-web)
 * [API Documentation (master branch)](https://actix.rs/actix-web/actix_web)
 
 ## Example
-
-<h2>
-  WARNING: This example is for the master branch which is currently in beta stages for v3. For
-  Actix web v2 see the <a href="https://actix.rs/docs/getting-started/">getting started guide</a>.
-</h2>
 
 Dependencies:
 
@@ -61,8 +58,8 @@ Code:
 use actix_web::{get, web, App, HttpServer, Responder};
 
 #[get("/{id}/{name}/index.html")]
-async fn index(info: web::Path<(u32, String)>) -> impl Responder {
-    format!("Hello {}! id:{}", info.1, info.0)
+async fn index(web::Path((id, name)): web::Path<(u32, String)>) -> impl Responder {
+    format!("Hello {}! id:{}", name, id)
 }
 
 #[actix_web::main]

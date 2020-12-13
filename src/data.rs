@@ -1,3 +1,4 @@
+use std::any::type_name;
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -19,25 +20,20 @@ pub(crate) type FnDataFactory =
 
 /// Application data.
 ///
-/// Application data is an arbitrary data attached to the app.
-/// Application data is available to all routes and could be added
-/// during application configuration process
-/// with `App::data()` method.
+/// Application level data is a piece of arbitrary data attached to the app, scope, or resource.
+/// Application data is available to all routes and can be added during the application
+/// configuration process via `App::data()`.
 ///
-/// Application data could be accessed by using `Data<T>`
-/// extractor where `T` is data type.
+/// Application data can be accessed by using `Data<T>` extractor where `T` is data type.
 ///
-/// **Note**: http server accepts an application factory rather than
-/// an application instance. Http server constructs an application
-/// instance for each thread, thus application data must be constructed
-/// multiple times. If you want to share data between different
-/// threads, a shareable object should be used, e.g. `Send + Sync`. Application
-/// data does not need to be `Send` or `Sync`. Internally `Data` type
-/// uses `Arc`. if your data implements `Send` + `Sync` traits you can
-/// use `web::Data::new()` and avoid double `Arc`.
+/// **Note**: http server accepts an application factory rather than an application instance. HTTP
+/// server constructs an application instance for each thread, thus application data must be
+/// constructed multiple times. If you want to share data between different threads, a shareable
+/// object should be used, e.g. `Send + Sync`. Application data does not need to be `Send`
+/// or `Sync`. Internally `Data` uses `Arc`.
 ///
-/// If route data is not set for a handler, using `Data<T>` extractor would
-/// cause *Internal Server Error* response.
+/// If route data is not set for a handler, using `Data<T>` extractor would cause *Internal
+/// Server Error* response.
 ///
 /// ```rust
 /// use std::sync::Mutex;
@@ -47,7 +43,7 @@ pub(crate) type FnDataFactory =
 ///     counter: usize,
 /// }
 ///
-/// /// Use `Data<T>` extractor to access data in handler.
+/// /// Use the `Data<T>` extractor to access data in a handler.
 /// async fn index(data: web::Data<Mutex<MyData>>) -> impl Responder {
 ///     let mut data = data.lock().unwrap();
 ///     data.counter += 1;
@@ -66,14 +62,10 @@ pub(crate) type FnDataFactory =
 /// }
 /// ```
 #[derive(Debug)]
-pub struct Data<T>(Arc<T>);
+pub struct Data<T: ?Sized>(Arc<T>);
 
 impl<T> Data<T> {
     /// Create new `Data` instance.
-    ///
-    /// Internally `Data` type uses `Arc`. if your data implements
-    /// `Send` + `Sync` traits you can use `web::Data::new()` and
-    /// avoid double `Arc`.
     pub fn new(state: T) -> Data<T> {
         Data(Arc::new(state))
     }
@@ -89,7 +81,7 @@ impl<T> Data<T> {
     }
 }
 
-impl<T> Deref for Data<T> {
+impl<T: ?Sized> Deref for Data<T> {
     type Target = Arc<T>;
 
     fn deref(&self) -> &Arc<T> {
@@ -97,19 +89,19 @@ impl<T> Deref for Data<T> {
     }
 }
 
-impl<T> Clone for Data<T> {
+impl<T: ?Sized> Clone for Data<T> {
     fn clone(&self) -> Data<T> {
         Data(self.0.clone())
     }
 }
 
-impl<T> From<Arc<T>> for Data<T> {
+impl<T: ?Sized> From<Arc<T>> for Data<T> {
     fn from(arc: Arc<T>) -> Self {
         Data(arc)
     }
 }
 
-impl<T: 'static> FromRequest for Data<T> {
+impl<T: ?Sized + 'static> FromRequest for Data<T> {
     type Config = ();
     type Error = Error;
     type Future = Ready<Result<Self, Error>>;
@@ -121,8 +113,9 @@ impl<T: 'static> FromRequest for Data<T> {
         } else {
             log::debug!(
                 "Failed to construct App-level Data extractor. \
-                 Request path: {:?}",
-                req.path()
+                 Request path: {:?} (type: {})",
+                req.path(),
+                type_name::<T>(),
             );
             err(ErrorInternalServerError(
                 "App data is not configured, to configure use App::data()",
@@ -131,7 +124,7 @@ impl<T: 'static> FromRequest for Data<T> {
     }
 }
 
-impl<T: 'static> DataFactory for Data<T> {
+impl<T: ?Sized + 'static> DataFactory for Data<T> {
     fn create(&self, extensions: &mut Extensions) -> bool {
         if !extensions.contains::<Data<T>>() {
             extensions.insert(Data(self.0.clone()));
@@ -200,14 +193,14 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_route_data_extractor() {
-        let mut srv =
-            init_service(App::new().service(web::resource("/").data(10usize).route(
-                web::get().to(|data: web::Data<usize>| {
-                    let _ = data.clone();
-                    HttpResponse::Ok()
-                }),
-            )))
-            .await;
+        let mut srv = init_service(
+            App::new().service(
+                web::resource("/")
+                    .data(10usize)
+                    .route(web::get().to(|_data: web::Data<usize>| HttpResponse::Ok())),
+            ),
+        )
+        .await;
 
         let req = TestRequest::default().to_request();
         let resp = srv.call(req).await.unwrap();
@@ -233,7 +226,6 @@ mod tests {
             web::resource("/").data(10usize).route(web::get().to(
                 |data: web::Data<usize>| {
                     assert_eq!(**data, 10);
-                    let _ = data.clone();
                     HttpResponse::Ok()
                 },
             )),
@@ -293,5 +285,25 @@ mod tests {
         let data_new = Data::new(String::from("test-123"));
         let data_from_arc = Data::from(Arc::new(String::from("test-123")));
         assert_eq!(data_new.0, data_from_arc.0)
+    }
+
+    #[actix_rt::test]
+    async fn test_data_from_dyn_arc() {
+        trait TestTrait {
+            fn get_num(&self) -> i32;
+        }
+        struct A {}
+        impl TestTrait for A {
+            fn get_num(&self) -> i32 {
+                42
+            }
+        }
+        // This works when Sized is required
+        let dyn_arc_box: Arc<Box<dyn TestTrait>> = Arc::new(Box::new(A {}));
+        let data_arc_box = Data::from(dyn_arc_box);
+        // This works when Data Sized Bound is removed
+        let dyn_arc: Arc<dyn TestTrait> = Arc::new(A {});
+        let data_arc = Data::from(dyn_arc);
+        assert_eq!(data_arc_box.get_num(), data_arc.get_num())
     }
 }

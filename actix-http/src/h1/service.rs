@@ -18,6 +18,7 @@ use crate::error::{DispatchError, Error, ParseError};
 use crate::helpers::DataFactory;
 use crate::request::Request;
 use crate::response::Response;
+use crate::{ConnectCallback, Extensions};
 
 use super::codec::Codec;
 use super::dispatcher::Dispatcher;
@@ -30,6 +31,7 @@ pub struct H1Service<T, S, B, X = ExpectHandler, U = UpgradeHandler<T>> {
     expect: X,
     upgrade: Option<U>,
     on_connect: Option<Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
+    on_connect_ext: Option<Rc<ConnectCallback<T>>>,
     _t: PhantomData<(T, B)>,
 }
 
@@ -52,6 +54,7 @@ where
             expect: ExpectHandler,
             upgrade: None,
             on_connect: None,
+            on_connect_ext: None,
             _t: PhantomData,
         }
     }
@@ -98,7 +101,7 @@ mod openssl {
     use super::*;
 
     use actix_tls::openssl::{Acceptor, SslAcceptor, SslStream};
-    use actix_tls::{openssl::HandshakeError, SslError};
+    use actix_tls::{openssl::HandshakeError, TlsError};
 
     impl<S, B, X, U> H1Service<SslStream<TcpStream>, S, B, X, U>
     where
@@ -126,19 +129,19 @@ mod openssl {
             Config = (),
             Request = TcpStream,
             Response = (),
-            Error = SslError<HandshakeError<TcpStream>, DispatchError>,
+            Error = TlsError<HandshakeError<TcpStream>, DispatchError>,
             InitError = (),
         > {
             pipeline_factory(
                 Acceptor::new(acceptor)
-                    .map_err(SslError::Ssl)
+                    .map_err(TlsError::Tls)
                     .map_init_err(|_| panic!()),
             )
             .and_then(|io: SslStream<TcpStream>| {
                 let peer_addr = io.get_ref().peer_addr().ok();
                 ok((io, peer_addr))
             })
-            .and_then(self.map_err(SslError::Service))
+            .and_then(self.map_err(TlsError::Service))
         }
     }
 }
@@ -147,7 +150,7 @@ mod openssl {
 mod rustls {
     use super::*;
     use actix_tls::rustls::{Acceptor, ServerConfig, TlsStream};
-    use actix_tls::SslError;
+    use actix_tls::TlsError;
     use std::{fmt, io};
 
     impl<S, B, X, U> H1Service<TlsStream<TcpStream>, S, B, X, U>
@@ -176,19 +179,19 @@ mod rustls {
             Config = (),
             Request = TcpStream,
             Response = (),
-            Error = SslError<io::Error, DispatchError>,
+            Error = TlsError<io::Error, DispatchError>,
             InitError = (),
         > {
             pipeline_factory(
                 Acceptor::new(config)
-                    .map_err(SslError::Ssl)
+                    .map_err(TlsError::Tls)
                     .map_init_err(|_| panic!()),
             )
             .and_then(|io: TlsStream<TcpStream>| {
                 let peer_addr = io.get_ref().0.peer_addr().ok();
                 ok((io, peer_addr))
             })
-            .and_then(self.map_err(SslError::Service))
+            .and_then(self.map_err(TlsError::Service))
         }
     }
 }
@@ -213,6 +216,7 @@ where
             srv: self.srv,
             upgrade: self.upgrade,
             on_connect: self.on_connect,
+            on_connect_ext: self.on_connect_ext,
             _t: PhantomData,
         }
     }
@@ -229,6 +233,7 @@ where
             srv: self.srv,
             expect: self.expect,
             on_connect: self.on_connect,
+            on_connect_ext: self.on_connect_ext,
             _t: PhantomData,
         }
     }
@@ -239,6 +244,12 @@ where
         f: Option<Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
     ) -> Self {
         self.on_connect = f;
+        self
+    }
+
+    /// Set on connect callback.
+    pub(crate) fn on_connect_ext(mut self, f: Option<Rc<ConnectCallback<T>>>) -> Self {
+        self.on_connect_ext = f;
         self
     }
 }
@@ -274,6 +285,7 @@ where
             expect: None,
             upgrade: None,
             on_connect: self.on_connect.clone(),
+            on_connect_ext: self.on_connect_ext.clone(),
             cfg: Some(self.cfg.clone()),
             _t: PhantomData,
         }
@@ -303,6 +315,7 @@ where
     expect: Option<X::Service>,
     upgrade: Option<U::Service>,
     on_connect: Option<Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
+    on_connect_ext: Option<Rc<ConnectCallback<T>>>,
     cfg: Option<ServiceConfig>,
     _t: PhantomData<(T, B)>,
 }
@@ -352,23 +365,26 @@ where
 
         Poll::Ready(result.map(|service| {
             let this = self.as_mut().project();
+
             H1ServiceHandler::new(
                 this.cfg.take().unwrap(),
                 service,
                 this.expect.take().unwrap(),
                 this.upgrade.take(),
                 this.on_connect.clone(),
+                this.on_connect_ext.clone(),
             )
         }))
     }
 }
 
-/// `Service` implementation for HTTP1 transport
+/// `Service` implementation for HTTP/1 transport
 pub struct H1ServiceHandler<T, S: Service, B, X: Service, U: Service> {
     srv: CloneableService<S>,
     expect: CloneableService<X>,
     upgrade: Option<CloneableService<U>>,
     on_connect: Option<Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
+    on_connect_ext: Option<Rc<ConnectCallback<T>>>,
     cfg: ServiceConfig,
     _t: PhantomData<(T, B)>,
 }
@@ -390,6 +406,7 @@ where
         expect: X,
         upgrade: Option<U>,
         on_connect: Option<Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
+        on_connect_ext: Option<Rc<ConnectCallback<T>>>,
     ) -> H1ServiceHandler<T, S, B, X, U> {
         H1ServiceHandler {
             srv: CloneableService::new(srv),
@@ -397,6 +414,7 @@ where
             upgrade: upgrade.map(CloneableService::new),
             cfg,
             on_connect,
+            on_connect_ext,
             _t: PhantomData,
         }
     }
@@ -462,11 +480,13 @@ where
     }
 
     fn call(&mut self, (io, addr): Self::Request) -> Self::Future {
-        let on_connect = if let Some(ref on_connect) = self.on_connect {
-            Some(on_connect(&io))
-        } else {
-            None
-        };
+        let deprecated_on_connect = self.on_connect.as_ref().map(|handler| handler(&io));
+
+        let mut connect_extensions = Extensions::new();
+        if let Some(ref handler) = self.on_connect_ext {
+            // run on_connect_ext callback, populating connect extensions
+            handler(&io, &mut connect_extensions);
+        }
 
         Dispatcher::new(
             io,
@@ -474,7 +494,8 @@ where
             self.srv.clone(),
             self.expect.clone(),
             self.upgrade.clone(),
-            on_connect,
+            deprecated_on_connect,
+            connect_extensions,
             addr,
         )
     }
@@ -548,10 +569,12 @@ where
 }
 
 #[doc(hidden)]
+#[pin_project::pin_project]
 pub struct OneRequestServiceResponse<T>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
+    #[pin]
     framed: Option<Framed<T, Codec>>,
 }
 
@@ -562,16 +585,18 @@ where
     type Output = Result<(Request, Framed<T, Codec>), ParseError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.framed.as_mut().unwrap().next_item(cx) {
-            Poll::Ready(Some(Ok(req))) => match req {
+        let this = self.as_mut().project();
+
+        match ready!(this.framed.as_pin_mut().unwrap().next_item(cx)) {
+            Some(Ok(req)) => match req {
                 Message::Item(req) => {
-                    Poll::Ready(Ok((req, self.framed.take().unwrap())))
+                    let mut this = self.as_mut().project();
+                    Poll::Ready(Ok((req, this.framed.take().unwrap())))
                 }
                 Message::Chunk(_) => unreachable!("Something is wrong"),
             },
-            Poll::Ready(Some(Err(err))) => Poll::Ready(Err(err)),
-            Poll::Ready(None) => Poll::Ready(Err(ParseError::Incomplete)),
-            Poll::Pending => Poll::Pending,
+            Some(Err(err)) => Poll::Ready(Err(err)),
+            None => Poll::Ready(Err(ParseError::Incomplete)),
         }
     }
 }

@@ -1,7 +1,4 @@
-#![warn(rust_2018_idioms, warnings)]
-#![allow(clippy::needless_doctest_main, clippy::type_complexity)]
-
-//! Actix web is a powerful, pragmatic, and extremely fast web framework for Rust.
+//! Actix Web is a powerful, pragmatic, and extremely fast web framework for Rust.
 //!
 //! ## Example
 //!
@@ -9,8 +6,8 @@
 //! use actix_web::{get, web, App, HttpServer, Responder};
 //!
 //! #[get("/{id}/{name}/index.html")]
-//! async fn index(info: web::Path<(u32, String)>) -> impl Responder {
-//!     format!("Hello {}! id:{}", info.1, info.0)
+//! async fn index(web::Path((id, name)): web::Path<(u32, String)>) -> impl Responder {
+//!     format!("Hello {}! id:{}", name, id)
 //! }
 //!
 //! #[actix_web::main]
@@ -59,7 +56,7 @@
 //! * Middlewares ([Logger, Session, CORS, etc](https://actix.rs/docs/middleware/))
 //! * Includes an async [HTTP client](https://actix.rs/actix-web/actix_web/client/index.html)
 //! * Supports [Actix actor framework](https://github.com/actix/actix)
-//! * Runs on stable Rust 1.41+
+//! * Runs on stable Rust 1.42+
 //!
 //! ## Crate Features
 //!
@@ -67,6 +64,11 @@
 //! * `openssl` - HTTPS support via `openssl` crate, supports `HTTP/2`
 //! * `rustls` - HTTPS support via `rustls` crate, supports `HTTP/2`
 //! * `secure-cookies` - secure cookies support
+
+#![deny(rust_2018_idioms)]
+#![allow(clippy::needless_doctest_main, clippy::type_complexity)]
+#![doc(html_logo_url = "https://actix.rs/img/logo.png")]
+#![doc(html_favicon_url = "https://actix.rs/favicon.ico")]
 
 mod app;
 mod app_service;
@@ -79,6 +81,7 @@ mod handler;
 mod info;
 pub mod middleware;
 mod request;
+mod request_data;
 mod resource;
 mod responder;
 mod rmap;
@@ -99,10 +102,11 @@ pub use crate::app::App;
 pub use crate::extract::FromRequest;
 pub use crate::request::HttpRequest;
 pub use crate::resource::Resource;
-pub use crate::responder::{Either, Responder};
+pub use crate::responder::Responder;
 pub use crate::route::Route;
 pub use crate::scope::Scope;
 pub use crate::server::HttpServer;
+pub use crate::types::{Either, EitherExtractError};
 
 pub mod dev {
     //! The `actix-web` prelude for library developers
@@ -213,9 +217,7 @@ pub mod client {
     //! }
     //! ```
 
-    pub use awc::error::{
-        ConnectError, InvalidUrl, PayloadError, SendRequestError, WsClientError,
-    };
+    pub use awc::error::*;
     pub use awc::{
         test, Client, ClientBuilder, ClientRequest, ClientResponse, Connector,
     };

@@ -24,6 +24,7 @@ use crate::message::ResponseHead;
 use crate::payload::Payload;
 use crate::request::Request;
 use crate::response::Response;
+use crate::Extensions;
 
 const CHUNK_SIZE: usize = 16_384;
 
@@ -36,6 +37,7 @@ where
     service: CloneableService<S>,
     connection: Connection<T, Bytes>,
     on_connect: Option<Box<dyn DataFactory>>,
+    on_connect_data: Extensions,
     config: ServiceConfig,
     peer_addr: Option<net::SocketAddr>,
     ka_expire: Instant,
@@ -56,6 +58,7 @@ where
         service: CloneableService<S>,
         connection: Connection<T, Bytes>,
         on_connect: Option<Box<dyn DataFactory>>,
+        on_connect_data: Extensions,
         config: ServiceConfig,
         timeout: Option<Delay>,
         peer_addr: Option<net::SocketAddr>,
@@ -82,6 +85,7 @@ where
             peer_addr,
             connection,
             on_connect,
+            on_connect_data,
             ka_expire,
             ka_timer,
             _t: PhantomData,
@@ -130,10 +134,14 @@ where
                     head.headers = parts.headers.into();
                     head.peer_addr = this.peer_addr;
 
+                    // DEPRECATED
                     // set on_connect data
                     if let Some(ref on_connect) = this.on_connect {
                         on_connect.set(&mut req.extensions_mut());
                     }
+
+                    // merge on_connect_ext data into request extensions
+                    req.extensions_mut().drain_from(&mut this.on_connect_data);
 
                     actix_rt::spawn(ServiceResponse::<
                         S::Future,
@@ -227,9 +235,11 @@ where
         if !has_date {
             let mut bytes = BytesMut::with_capacity(29);
             self.config.set_date_header(&mut bytes);
-            res.headers_mut().insert(DATE, unsafe {
-                HeaderValue::from_maybe_shared_unchecked(bytes.freeze())
-            });
+            res.headers_mut().insert(
+                DATE,
+                // SAFETY: serialized date-times are known ASCII strings
+                unsafe { HeaderValue::from_maybe_shared_unchecked(bytes.freeze()) },
+            );
         }
 
         res
@@ -303,55 +313,59 @@ where
                     }
                 }
             },
-            ServiceResponseStateProj::SendPayload(ref mut stream, ref mut body) => loop {
+            ServiceResponseStateProj::SendPayload(ref mut stream, ref mut body) => {
                 loop {
-                    if let Some(ref mut buffer) = this.buffer {
-                        match stream.poll_capacity(cx) {
-                            Poll::Pending => return Poll::Pending,
-                            Poll::Ready(None) => return Poll::Ready(()),
-                            Poll::Ready(Some(Ok(cap))) => {
-                                let len = buffer.len();
-                                let bytes = buffer.split_to(std::cmp::min(cap, len));
+                    loop {
+                        if let Some(ref mut buffer) = this.buffer {
+                            match stream.poll_capacity(cx) {
+                                Poll::Pending => return Poll::Pending,
+                                Poll::Ready(None) => return Poll::Ready(()),
+                                Poll::Ready(Some(Ok(cap))) => {
+                                    let len = buffer.len();
+                                    let bytes = buffer.split_to(std::cmp::min(cap, len));
 
-                                if let Err(e) = stream.send_data(bytes, false) {
+                                    if let Err(e) = stream.send_data(bytes, false) {
+                                        warn!("{:?}", e);
+                                        return Poll::Ready(());
+                                    } else if !buffer.is_empty() {
+                                        let cap =
+                                            std::cmp::min(buffer.len(), CHUNK_SIZE);
+                                        stream.reserve_capacity(cap);
+                                    } else {
+                                        this.buffer.take();
+                                    }
+                                }
+                                Poll::Ready(Some(Err(e))) => {
                                     warn!("{:?}", e);
                                     return Poll::Ready(());
-                                } else if !buffer.is_empty() {
-                                    let cap = std::cmp::min(buffer.len(), CHUNK_SIZE);
-                                    stream.reserve_capacity(cap);
-                                } else {
-                                    this.buffer.take();
                                 }
                             }
-                            Poll::Ready(Some(Err(e))) => {
-                                warn!("{:?}", e);
-                                return Poll::Ready(());
-                            }
-                        }
-                    } else {
-                        match body.as_mut().poll_next(cx) {
-                            Poll::Pending => return Poll::Pending,
-                            Poll::Ready(None) => {
-                                if let Err(e) = stream.send_data(Bytes::new(), true) {
-                                    warn!("{:?}", e);
+                        } else {
+                            match body.as_mut().poll_next(cx) {
+                                Poll::Pending => return Poll::Pending,
+                                Poll::Ready(None) => {
+                                    if let Err(e) = stream.send_data(Bytes::new(), true)
+                                    {
+                                        warn!("{:?}", e);
+                                    }
+                                    return Poll::Ready(());
                                 }
-                                return Poll::Ready(());
-                            }
-                            Poll::Ready(Some(Ok(chunk))) => {
-                                stream.reserve_capacity(std::cmp::min(
-                                    chunk.len(),
-                                    CHUNK_SIZE,
-                                ));
-                                *this.buffer = Some(chunk);
-                            }
-                            Poll::Ready(Some(Err(e))) => {
-                                error!("Response payload stream error: {:?}", e);
-                                return Poll::Ready(());
+                                Poll::Ready(Some(Ok(chunk))) => {
+                                    stream.reserve_capacity(std::cmp::min(
+                                        chunk.len(),
+                                        CHUNK_SIZE,
+                                    ));
+                                    *this.buffer = Some(chunk);
+                                }
+                                Poll::Ready(Some(Err(e))) => {
+                                    error!("Response payload stream error: {:?}", e);
+                                    return Poll::Ready(());
+                                }
                             }
                         }
                     }
                 }
-            },
+            }
         }
     }
 }

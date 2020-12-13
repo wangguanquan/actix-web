@@ -274,9 +274,7 @@ async fn test_h2_head_empty() {
 async fn test_h2_head_binary() {
     let mut srv = test_server(move || {
         HttpService::build()
-            .h2(|_| {
-                ok::<_, ()>(Response::Ok().body(STR))
-            })
+            .h2(|_| ok::<_, ()>(Response::Ok().body(STR)))
             .openssl(ssl_acceptor())
             .map_err(|_| ())
     })
@@ -413,8 +411,10 @@ async fn test_h2_on_connect() {
     let srv = test_server(move || {
         HttpService::build()
             .on_connect(|_| 10usize)
+            .on_connect_ext(|_, data| data.insert(20isize))
             .h2(|req: Request| {
                 assert!(req.extensions().contains::<usize>());
+                assert!(req.extensions().contains::<isize>());
                 ok::<_, ()>(Response::Ok().finish())
             })
             .openssl(ssl_acceptor())

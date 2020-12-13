@@ -17,7 +17,7 @@ use futures_util::future::{ok, Either, FutureExt, LocalBoxFuture};
 /// # fn main() {
 /// let enable_normalize = std::env::var("NORMALIZE_PATH") == Ok("true".into());
 /// let app = App::new()
-///     .wrap(Condition::new(enable_normalize, NormalizePath));
+///     .wrap(Condition::new(enable_normalize, NormalizePath::default()));
 /// # }
 /// ```
 pub struct Condition<T> {
@@ -105,6 +105,7 @@ mod tests {
     use crate::test::{self, TestRequest};
     use crate::HttpResponse;
 
+    #[allow(clippy::unnecessary_wraps)]
     fn render_500<B>(mut res: ServiceResponse<B>) -> Result<ErrorHandlerResponse<B>> {
         res.response_mut()
             .headers_mut()

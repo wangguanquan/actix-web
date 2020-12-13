@@ -1,6 +1,70 @@
 # Changes
 
-## [Unreleased] - xxx
+## Unreleased - 2020-xx-xx
+
+
+## 2.2.0 - 2020-11-25
+### Added
+* HttpResponse builders for 1xx status codes. [#1768]
+* `Accept::mime_precedence` and `Accept::mime_preference`. [#1793]
+* `TryFrom<u16>` and `TryFrom<f32>` for `http::header::Quality`. [#1797]
+
+### Fixed
+* Started dropping `transfer-encoding: chunked` and `Content-Length` for 1XX and 204 responses. [#1767]
+
+### Changed
+* Upgrade `serde_urlencoded` to `0.7`. [#1773]
+
+[#1773]: https://github.com/actix/actix-web/pull/1773
+[#1767]: https://github.com/actix/actix-web/pull/1767
+[#1768]: https://github.com/actix/actix-web/pull/1768
+[#1793]: https://github.com/actix/actix-web/pull/1793
+[#1797]: https://github.com/actix/actix-web/pull/1797
+
+
+## 2.1.0 - 2020-10-30
+### Added
+* Added more flexible `on_connect_ext` methods for on-connect handling. [#1754]
+
+### Changed
+* Upgrade `base64` to `0.13`. [#1744]
+* Upgrade `pin-project` to `1.0`. [#1733]
+* Deprecate `ResponseBuilder::{if_some, if_true}`. [#1760]
+
+[#1760]: https://github.com/actix/actix-web/pull/1760
+[#1754]: https://github.com/actix/actix-web/pull/1754
+[#1733]: https://github.com/actix/actix-web/pull/1733
+[#1744]: https://github.com/actix/actix-web/pull/1744
+
+
+## 2.0.0 - 2020-09-11
+* No significant changes from `2.0.0-beta.4`.
+
+
+## 2.0.0-beta.4 - 2020-09-09
+### Changed
+* Update actix-codec and actix-utils dependencies.
+* Update actix-connect and actix-tls dependencies.
+
+
+## [2.0.0-beta.3] - 2020-08-14
+
+### Fixed
+* Memory leak of `client::pool::ConnectorPoolSupport`. [#1626]
+
+[#1626]: https://github.com/actix/actix-web/pull/1626
+
+
+## [2.0.0-beta.2] - 2020-07-21
+### Fixed
+* Potential UB in h1 decoder using uninitialized memory. [#1614]
+
+### Changed
+* Fix illegal chunked encoding. [#1615]
+
+[#1614]: https://github.com/actix/actix-web/pull/1614
+[#1615]: https://github.com/actix/actix-web/pull/1615
+
 
 ## [2.0.0-beta.1] - 2020-07-11
 

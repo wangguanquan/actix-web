@@ -183,6 +183,7 @@ where
         self.data.extend(cfg.data);
         self.services.extend(cfg.services);
         self.external.extend(cfg.external);
+        self.extensions.extend(cfg.extensions);
         self
     }
 
@@ -459,8 +460,8 @@ where
 {
     fn into_factory(self) -> AppInit<T, B> {
         AppInit {
-            data: Rc::new(self.data),
-            data_factories: Rc::new(self.data_factories),
+            data: self.data.into_boxed_slice().into(),
+            data_factories: self.data_factories.into_boxed_slice().into(),
             endpoint: self.endpoint,
             services: Rc::new(RefCell::new(self.services)),
             external: RefCell::new(self.external),
@@ -489,7 +490,7 @@ mod tests {
     #[actix_rt::test]
     async fn test_default_resource() {
         let mut srv = init_service(
-            App::new().service(web::resource("/test").to(|| HttpResponse::Ok())),
+            App::new().service(web::resource("/test").to(HttpResponse::Ok)),
         )
         .await;
         let req = TestRequest::with_uri("/test").to_request();
@@ -502,13 +503,13 @@ mod tests {
 
         let mut srv = init_service(
             App::new()
-                .service(web::resource("/test").to(|| HttpResponse::Ok()))
+                .service(web::resource("/test").to(HttpResponse::Ok))
                 .service(
                     web::resource("/test2")
                         .default_service(|r: ServiceRequest| {
                             ok(r.into_response(HttpResponse::Created()))
                         })
-                        .route(web::get().to(|| HttpResponse::Ok())),
+                        .route(web::get().to(HttpResponse::Ok)),
                 )
                 .default_service(|r: ServiceRequest| {
                     ok(r.into_response(HttpResponse::MethodNotAllowed()))
@@ -585,7 +586,7 @@ mod tests {
                     DefaultHeaders::new()
                         .header(header::CONTENT_TYPE, HeaderValue::from_static("0001")),
                 )
-                .route("/test", web::get().to(|| HttpResponse::Ok())),
+                .route("/test", web::get().to(HttpResponse::Ok)),
         )
         .await;
         let req = TestRequest::with_uri("/test").to_request();
@@ -601,7 +602,7 @@ mod tests {
     async fn test_router_wrap() {
         let mut srv = init_service(
             App::new()
-                .route("/test", web::get().to(|| HttpResponse::Ok()))
+                .route("/test", web::get().to(HttpResponse::Ok))
                 .wrap(
                     DefaultHeaders::new()
                         .header(header::CONTENT_TYPE, HeaderValue::from_static("0001")),
@@ -632,7 +633,7 @@ mod tests {
                         Ok(res)
                     }
                 })
-                .service(web::resource("/test").to(|| HttpResponse::Ok())),
+                .service(web::resource("/test").to(HttpResponse::Ok)),
         )
         .await;
         let req = TestRequest::with_uri("/test").to_request();
@@ -648,7 +649,7 @@ mod tests {
     async fn test_router_wrap_fn() {
         let mut srv = init_service(
             App::new()
-                .route("/test", web::get().to(|| HttpResponse::Ok()))
+                .route("/test", web::get().to(HttpResponse::Ok))
                 .wrap_fn(|req, srv| {
                     let fut = srv.call(req);
                     async {
@@ -679,10 +680,9 @@ mod tests {
                 .route(
                     "/test",
                     web::get().to(|req: HttpRequest| {
-                        HttpResponse::Ok().body(format!(
-                            "{}",
-                            req.url_for("youtube", &["12345"]).unwrap()
-                        ))
+                        HttpResponse::Ok().body(
+                            req.url_for("youtube", &["12345"]).unwrap().to_string(),
+                        )
                     }),
                 ),
         )

@@ -489,9 +489,7 @@ async fn test_h1_head_empty() {
 async fn test_h1_head_binary() {
     let mut srv = test_server(|| {
         HttpService::build()
-            .h1(|_| {
-                ok::<_, ()>(Response::Ok().body(STR))
-            })
+            .h1(|_| ok::<_, ()>(Response::Ok().body(STR)))
             .tcp()
     })
     .await;
@@ -665,8 +663,10 @@ async fn test_h1_on_connect() {
     let srv = test_server(|| {
         HttpService::build()
             .on_connect(|_| 10usize)
+            .on_connect_ext(|_, data| data.insert(20isize))
             .h1(|req: Request| {
                 assert!(req.extensions().contains::<usize>());
+                assert!(req.extensions().contains::<isize>());
                 future::ok::<_, ()>(Response::Ok().finish())
             })
             .tcp()

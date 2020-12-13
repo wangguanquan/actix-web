@@ -1,4 +1,9 @@
 //! Various helpers for Actix applications to use during testing.
+
+#![deny(rust_2018_idioms)]
+#![doc(html_logo_url = "https://actix.rs/img/logo.png")]
+#![doc(html_favicon_url = "https://actix.rs/favicon.ico")]
+
 use std::sync::mpsc;
 use std::{net, thread, time};
 
@@ -44,12 +49,20 @@ pub use actix_testing::*;
 /// }
 /// ```
 pub async fn test_server<F: ServiceFactory<TcpStream>>(factory: F) -> TestServer {
+    let tcp = net::TcpListener::bind("127.0.0.1:0").unwrap();
+    test_server_with_addr(tcp, factory).await
+}
+
+/// Start [`test server`](./fn.test_server.html) on a concrete Address
+pub async fn test_server_with_addr<F: ServiceFactory<TcpStream>>(
+    tcp: net::TcpListener,
+    factory: F,
+) -> TestServer {
     let (tx, rx) = mpsc::channel();
 
     // run server in separate thread
     thread::spawn(move || {
         let sys = System::new("actix-test-server");
-        let tcp = net::TcpListener::bind("127.0.0.1:0").unwrap();
         let local_addr = tcp.local_addr().unwrap();
 
         Server::build()
@@ -90,7 +103,7 @@ pub async fn test_server<F: ServiceFactory<TcpStream>>(factory: F) -> TestServer
             }
         };
 
-        Client::build().connector(connector).finish()
+        Client::builder().connector(connector).finish()
     };
     actix_connect::start_default_resolver().await.unwrap();
 

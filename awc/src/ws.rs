@@ -1,4 +1,31 @@
 //! Websockets client
+//!
+//! Type definitions required to use [`awc::Client`](../struct.Client.html) as a WebSocket client.
+//!
+//! # Example
+//!
+//! ```
+//! use awc::{Client, ws};
+//! use futures_util::{sink::SinkExt, stream::StreamExt};
+//!
+//! #[actix_rt::main]
+//! async fn main() {
+//!     let (_resp, mut connection) = Client::new()
+//!         .ws("ws://echo.websocket.org")
+//!         .connect()
+//!         .await
+//!         .unwrap();
+//!
+//!     connection
+//!         .send(ws::Message::Text("Echo".to_string()))
+//!         .await
+//!         .unwrap();
+//!     let response = connection.next().await.unwrap().unwrap();
+//!
+//!     assert_eq!(response, ws::Frame::Text("Echo".as_bytes().into()));
+//! }
+//! ```
+
 use std::convert::TryFrom;
 use std::net::SocketAddr;
 use std::rc::Rc;
@@ -43,9 +70,14 @@ impl WebsocketsRequest {
         <Uri as TryFrom<U>>::Error: Into<HttpError>,
     {
         let mut err = None;
-        let mut head = RequestHead::default();
-        head.method = Method::GET;
-        head.version = Version::HTTP_11;
+
+        #[allow(clippy::field_reassign_with_default)]
+        let mut head = {
+            let mut head = RequestHead::default();
+            head.method = Method::GET;
+            head.version = Version::HTTP_11;
+            head
+        };
 
         match Uri::try_from(uri) {
             Ok(uri) => head.uri = uri,
@@ -366,7 +398,7 @@ impl WebsocketsRequest {
         // response and ws framed
         Ok((
             ClientResponse::new(head, Payload::None),
-            framed.map_codec(|_| {
+            framed.into_map_codec(|_| {
                 if server_mode {
                     ws::Codec::new().max_size(max_size)
                 } else {
@@ -407,7 +439,7 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_header_override() {
-        let req = Client::build()
+        let req = Client::builder()
             .header(header::CONTENT_TYPE, "111")
             .finish()
             .ws("/")

@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::{fmt, net, rc};
+use std::{fmt, net, rc::Rc};
 
 use actix_codec::{AsyncRead, AsyncWrite, Framed};
 use actix_rt::net::TcpStream;
@@ -20,15 +20,17 @@ use crate::error::{DispatchError, Error};
 use crate::helpers::DataFactory;
 use crate::request::Request;
 use crate::response::Response;
-use crate::{h1, h2::Dispatcher, Protocol};
+use crate::{h1, h2::Dispatcher, ConnectCallback, Extensions, Protocol};
 
-/// `ServiceFactory` HTTP1.1/HTTP2 transport implementation
+/// A `ServiceFactory` for HTTP/1.1 or HTTP/2 protocol.
 pub struct HttpService<T, S, B, X = h1::ExpectHandler, U = h1::UpgradeHandler<T>> {
     srv: S,
     cfg: ServiceConfig,
     expect: X,
     upgrade: Option<U>,
-    on_connect: Option<rc::Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
+    // DEPRECATED: in favor of on_connect_ext
+    on_connect: Option<Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
+    on_connect_ext: Option<Rc<ConnectCallback<T>>>,
     _t: PhantomData<(T, B)>,
 }
 
@@ -66,6 +68,7 @@ where
             expect: h1::ExpectHandler,
             upgrade: None,
             on_connect: None,
+            on_connect_ext: None,
             _t: PhantomData,
         }
     }
@@ -81,6 +84,7 @@ where
             expect: h1::ExpectHandler,
             upgrade: None,
             on_connect: None,
+            on_connect_ext: None,
             _t: PhantomData,
         }
     }
@@ -113,6 +117,7 @@ where
             srv: self.srv,
             upgrade: self.upgrade,
             on_connect: self.on_connect,
+            on_connect_ext: self.on_connect_ext,
             _t: PhantomData,
         }
     }
@@ -138,6 +143,7 @@ where
             srv: self.srv,
             expect: self.expect,
             on_connect: self.on_connect,
+            on_connect_ext: self.on_connect_ext,
             _t: PhantomData,
         }
     }
@@ -145,9 +151,15 @@ where
     /// Set on connect callback.
     pub(crate) fn on_connect(
         mut self,
-        f: Option<rc::Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
+        f: Option<Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
     ) -> Self {
         self.on_connect = f;
+        self
+    }
+
+    /// Set connect callback with mutable access to request data container.
+    pub(crate) fn on_connect_ext(mut self, f: Option<Rc<ConnectCallback<T>>>) -> Self {
+        self.on_connect_ext = f;
         self
     }
 }
@@ -195,7 +207,7 @@ where
 mod openssl {
     use super::*;
     use actix_tls::openssl::{Acceptor, SslAcceptor, SslStream};
-    use actix_tls::{openssl::HandshakeError, SslError};
+    use actix_tls::{openssl::HandshakeError, TlsError};
 
     impl<S, B, X, U> HttpService<SslStream<TcpStream>, S, B, X, U>
     where
@@ -226,12 +238,12 @@ mod openssl {
             Config = (),
             Request = TcpStream,
             Response = (),
-            Error = SslError<HandshakeError<TcpStream>, DispatchError>,
+            Error = TlsError<HandshakeError<TcpStream>, DispatchError>,
             InitError = (),
         > {
             pipeline_factory(
                 Acceptor::new(acceptor)
-                    .map_err(SslError::Ssl)
+                    .map_err(TlsError::Tls)
                     .map_init_err(|_| panic!()),
             )
             .and_then(|io: SslStream<TcpStream>| {
@@ -247,7 +259,7 @@ mod openssl {
                 let peer_addr = io.get_ref().peer_addr().ok();
                 ok((io, proto, peer_addr))
             })
-            .and_then(self.map_err(SslError::Service))
+            .and_then(self.map_err(TlsError::Service))
         }
     }
 }
@@ -256,7 +268,7 @@ mod openssl {
 mod rustls {
     use super::*;
     use actix_tls::rustls::{Acceptor, ServerConfig, Session, TlsStream};
-    use actix_tls::SslError;
+    use actix_tls::TlsError;
     use std::io;
 
     impl<S, B, X, U> HttpService<TlsStream<TcpStream>, S, B, X, U>
@@ -288,7 +300,7 @@ mod rustls {
             Config = (),
             Request = TcpStream,
             Response = (),
-            Error = SslError<io::Error, DispatchError>,
+            Error = TlsError<io::Error, DispatchError>,
             InitError = (),
         > {
             let protos = vec!["h2".to_string().into(), "http/1.1".to_string().into()];
@@ -296,7 +308,7 @@ mod rustls {
 
             pipeline_factory(
                 Acceptor::new(config)
-                    .map_err(SslError::Ssl)
+                    .map_err(TlsError::Tls)
                     .map_init_err(|_| panic!()),
             )
             .and_then(|io: TlsStream<TcpStream>| {
@@ -312,7 +324,7 @@ mod rustls {
                 let peer_addr = io.get_ref().0.peer_addr().ok();
                 ok((io, proto, peer_addr))
             })
-            .and_then(self.map_err(SslError::Service))
+            .and_then(self.map_err(TlsError::Service))
         }
     }
 }
@@ -355,6 +367,7 @@ where
             expect: None,
             upgrade: None,
             on_connect: self.on_connect.clone(),
+            on_connect_ext: self.on_connect_ext.clone(),
             cfg: self.cfg.clone(),
             _t: PhantomData,
         }
@@ -378,7 +391,8 @@ pub struct HttpServiceResponse<
     fut_upg: Option<U::Future>,
     expect: Option<X::Service>,
     upgrade: Option<U::Service>,
-    on_connect: Option<rc::Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
+    on_connect: Option<Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
+    on_connect_ext: Option<Rc<ConnectCallback<T>>>,
     cfg: ServiceConfig,
     _t: PhantomData<(T, B)>,
 }
@@ -429,6 +443,7 @@ where
             .fut
             .poll(cx)
             .map_err(|e| log::error!("Init http service error: {:?}", e)));
+
         Poll::Ready(result.map(|service| {
             let this = self.as_mut().project();
             HttpServiceHandler::new(
@@ -437,6 +452,7 @@ where
                 this.expect.take().unwrap(),
                 this.upgrade.take(),
                 this.on_connect.clone(),
+                this.on_connect_ext.clone(),
             )
         }))
     }
@@ -448,7 +464,8 @@ pub struct HttpServiceHandler<T, S: Service, B, X: Service, U: Service> {
     expect: CloneableService<X>,
     upgrade: Option<CloneableService<U>>,
     cfg: ServiceConfig,
-    on_connect: Option<rc::Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
+    on_connect: Option<Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
+    on_connect_ext: Option<Rc<ConnectCallback<T>>>,
     _t: PhantomData<(T, B, X)>,
 }
 
@@ -469,11 +486,13 @@ where
         srv: S,
         expect: X,
         upgrade: Option<U>,
-        on_connect: Option<rc::Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
+        on_connect: Option<Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
+        on_connect_ext: Option<Rc<ConnectCallback<T>>>,
     ) -> HttpServiceHandler<T, S, B, X, U> {
         HttpServiceHandler {
             cfg,
             on_connect,
+            on_connect_ext,
             srv: CloneableService::new(srv),
             expect: CloneableService::new(expect),
             upgrade: upgrade.map(CloneableService::new),
@@ -543,11 +562,12 @@ where
     }
 
     fn call(&mut self, (io, proto, peer_addr): Self::Request) -> Self::Future {
-        let on_connect = if let Some(ref on_connect) = self.on_connect {
-            Some(on_connect(&io))
-        } else {
-            None
-        };
+        let mut connect_extensions = Extensions::new();
+
+        let deprecated_on_connect = self.on_connect.as_ref().map(|handler| handler(&io));
+        if let Some(ref handler) = self.on_connect_ext {
+            handler(&io, &mut connect_extensions);
+        }
 
         match proto {
             Protocol::Http2 => HttpServiceHandlerResponse {
@@ -555,10 +575,12 @@ where
                     server::handshake(io),
                     self.cfg.clone(),
                     self.srv.clone(),
-                    on_connect,
+                    deprecated_on_connect,
+                    connect_extensions,
                     peer_addr,
                 ))),
             },
+
             Protocol::Http1 => HttpServiceHandlerResponse {
                 state: State::H1(h1::Dispatcher::new(
                     io,
@@ -566,7 +588,8 @@ where
                     self.srv.clone(),
                     self.expect.clone(),
                     self.upgrade.clone(),
-                    on_connect,
+                    deprecated_on_connect,
+                    connect_extensions,
                     peer_addr,
                 )),
             },
@@ -595,6 +618,7 @@ where
             ServiceConfig,
             CloneableService<S>,
             Option<Box<dyn DataFactory>>,
+            Extensions,
             Option<net::SocketAddr>,
         )>,
     ),
@@ -670,9 +694,16 @@ where
                 } else {
                     panic!()
                 };
-                let (_, cfg, srv, on_connect, peer_addr) = data.take().unwrap();
+                let (_, cfg, srv, on_connect, on_connect_data, peer_addr) =
+                    data.take().unwrap();
                 self.set(State::H2(Dispatcher::new(
-                    srv, conn, on_connect, cfg, None, peer_addr,
+                    srv,
+                    conn,
+                    on_connect,
+                    on_connect_data,
+                    cfg,
+                    None,
+                    peer_addr,
                 )));
                 self.poll(cx)
             }
